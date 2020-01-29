@@ -1,7 +1,7 @@
 # zeek-spy - Sampling Profiler for Zeek
 
-Spy on a `zeek` process using `ptrace(2)`, `elf` and hard-coded memory
-offsets and sample the `call_stack` to create pprof profiles.
+Spy on a `zeek` process using `ptrace(2)`, `elf` and hard-coded
+memory offsets to create pprof profiles.
 
 ## Compatibility / Caution
 
@@ -51,6 +51,26 @@ Clang/LLVM - nope, not tested and guaranteed to not work at this point.
 
     # Or browse the profile interactively
     $ pprof -ignore=empty_call_stack -trim=false -lines  ./zeek.pb.gz
+
+## Profiling a PCAP file
+
+This is a bit of a crutch, but works for demoing purposes.
+
+    $ timeout 120 /opt/zeek/bin/zeek -r ./pcaps/maccdc2012_00000.pcap & sleep 0.2 && ./zeek-spy -pid $(pgrep zeek) -hz 250 -profile ./macdc2012.pb.gz
+    2020/01/29 16:22:13 Using pid=3262, hz=250 period=4ms profile=./macdc2012.pb.gz
+    2020/01/29 16:22:13 Profiling ZeekProcess{Pid=3262, Exe=/opt/zeek/bin/zeek, LoadAddr=0x5566da8c5000, CallStackAddr=0x5566db642680, FrameStackAddr=0x5566db642470}
+    1331902557.400000 received termination signal
+    wait failed for 3262: process exited?!
+    2020/01/29 16:23:13 [WARN] Could not detach from process: no such process
+    2020/01/29 16:23:13 Failed to spy: process exited?
+    2020/01/29 16:23:13 Writing protobuf...
+    2020/01/29 16:23:13 Done.
+
+    # Analyze
+    $ pprof -http=localhost:9999 -ignore=empty_call_stack -lines -trim=false ./macdc2012.pb.gz
+
+
+The PCAP is from https://www.netresec.com/?page=MACCDC
 
 
 ## pprof flags

@@ -1,4 +1,4 @@
-// Spying on a ZeekProcess
+// Spying on a zeek process
 //
 // TODO: make some effort to abstract GCC specifics (?)
 //
@@ -16,8 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall" // XXX: Deprecated ?
-	"time"
+	"syscall"
 
 	"debug/elf"
 )
@@ -35,16 +34,8 @@ func (zp *ZeekProcess) String() string {
 		zp.Pid, zp.Exe, zp.LoadAddr, zp.CallStackAddr, zp.FrameStackAddr)
 }
 
-type SpyDurations struct {
-	AttachDuration        time.Duration
-	WaitDuration          time.Duration
-	ReadCallStackDuration time.Duration
-	TotalDuration         time.Duration
-}
-
 type SpyResult struct {
-	Stack     []Call
-	Durations SpyDurations
+	Stack []Call
 }
 
 const (
@@ -69,6 +60,10 @@ type Func struct {
 	Line     int
 }
 
+var (
+	emptyCallStack = []Call{Call{Func{0, "<empty_call_stack>", 1, "<zeek>", 0}, "<zeek>", 0}}
+)
+
 // Read all CallInfo entries stored in the call_stack vector.
 //
 // This assumes we have attached to the process, waited for it to stop
@@ -83,27 +78,28 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	callStackSize := int(vecFinish-vecStart) / 24
+
+	if callStackSize == 0 {
+		return emptyCallStack, nil
+	}
 
 	result := make([]Call, callStackSize)
 
-	if callStackSize == 0 {
-		return []Call{Call{Func{0, "<empty_call_stack>", 1, "<zeek>", 0}, "<zeek>", 0}}, nil
-	}
-
-	// CallInfo is 24 bytes with 3 pointers.
-	// call
-	// func
-	// args
-	//
 	funcBytes := 96
 	funcData := make([]byte, funcBytes)
+
+	// Iterate over all CallInfo entries
 	for i := 0; i < callStackSize; i++ {
-		offset := i * 24
-		// log.Printf("data[%d]: %x", i, data[offset:offset+24])
+		offset := i * 24 // CallInfo is 3 pointers, 24 bytes
+
+		// log.Printf("data[%d]: %#x", i, data[offset:offset+24])
 		callPtr := uintptr(binary.LittleEndian.Uint64(vecData[offset : offset+8]))
 
-		if callPtr > 0 && i > 0 { // There is information about the caller in CallExpr
+		// If there is a callPtr, update the previous Call instance
+		// to include the location information from it.
+		if callPtr > 0 && i > 0 {
 			filename, line, err := zp.readLocationFromBroObj(callPtr)
 			if err != nil {
 				return nil, err
@@ -122,9 +118,6 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 			return nil, err
 		}
 
-		// if basic_string.h makes any sense, the first bytes
-		// are a pointer to a null terminated string, followed by
-		// size_type _M_string_length
 		kindValue := binary.LittleEndian.Uint64(funcData[56:64])
 		cStrPointer := binary.LittleEndian.Uint64(funcData[72:80])
 
@@ -145,12 +138,15 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 
 		f := Func{uintptr(funcPtr), funcName, kind, filename, line}
 		result[i] = Call{f, "", 0}
-		// log.Printf("result[%d]=%+v (funcPtr=0x%x)\n", i, result[i], funcPtr)
+		// log.Printf("result[%d]=%+v (funcPtr=%#x)\n", i, result[i], funcPtr)
 
 	}
 
 	// If the call_stack was of length 1, consult the g_frame_stack
-	// to find the location where we are (use next_stmt in the frame).
+	// to find the location of the next_stmt in the first frame there.
+	//
+	// The Func object inside CallInfo points to a `.bif` function,
+	// and not the actul event handler that is running.
 	//
 	// This is a bit of a hack and it would be much nicer if we had
 	// this information available elsewhere.
@@ -160,17 +156,20 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 			return nil, err
 		}
 		frameStackSize := (frameVecFinish - frameVecStart) / 8
-		_ = frameStackSize
+		if frameStackSize < 1 {
+			return nil, fmt.Errorf("Bad frameStackSize: %d", frameStackSize)
+		}
 
 		framePtr := uintptr(binary.LittleEndian.Uint64(frameVecData[:8]))
 		// fmt.Printf("frameStackSize=%d framePtr=0x%x\n", frameStackSize, framePtr)
 
-		callPtrData := make([]byte, 8)
-		_, err = syscall.PtracePeekData(zp.Pid, framePtr+144, callPtrData)
+		// Read the next_stmt pointer and interpret it. It is at offset 144.
+		stmtData := make([]byte, 8)
+		_, err = syscall.PtracePeekData(zp.Pid, framePtr+144, stmtData)
 		if err != nil {
 			return nil, err
 		}
-		stmtPtr := uintptr(binary.LittleEndian.Uint64(callPtrData[:8]))
+		stmtPtr := uintptr(binary.LittleEndian.Uint64(stmtData[:8]))
 
 		if stmtPtr > 0 {
 			filename, line, err := zp.readLocationFromBroObj(stmtPtr)
@@ -182,6 +181,16 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		}
 		// XXX: It would be nice if we could actually get the proper
 		//      location of the event handler.
+	}
+
+	// XXX: If function at call_stack[0] is at a different location
+	//      then what was found in the `call`, prepend the name/filename/line
+	//      as a separate Call.
+	//
+	//      This adds a call from a .bif file to the stack.
+	f0 := result[0].Func
+	if f0.Filename != result[0].Filename && f0.Line != result[0].Line {
+		result = append([]Call{Call{f0, f0.Filename, f0.Line}}, result...)
 	}
 
 	return result, nil
@@ -282,51 +291,39 @@ func (zp *ZeekProcess) wait() (err error) {
 		return err
 	}
 	if status.Exited() {
-		return errors.New("process exited?")
+		return errors.New("process exited")
 	}
 	if !status.Stopped() {
-		return errors.New("process did not stop?")
+		return errors.New("process did not stop")
 	}
 	return err
 }
 
 func (zp *ZeekProcess) detach() {
 	if err := syscall.PtraceDetach(zp.Pid); err != nil {
-		log.Printf("[WARN] Could not detach from process.\n")
+		log.Printf("[WARN] Could not detach from process: %v\n", err)
 	}
 }
 
 func (zp *ZeekProcess) Spy() (*SpyResult, error) {
 
-	timeStart := time.Now()
-
 	if err := zp.attach(); err != nil {
-		log.Printf("ptrace attach failed for %d!\n", zp.Pid)
+		log.Printf("ptrace attach failed for %d: %v\n", zp.Pid, err)
 		return nil, err
 	}
 	defer zp.detach()
-	timeAttached := time.Now()
 
 	if err := zp.wait(); err != nil {
-		fmt.Printf("wait failed for %d!\n", zp.Pid)
+		fmt.Printf("wait failed for %d: %v!\n", zp.Pid, err)
 		return nil, err
 	}
-	timeWaited := time.Now()
 
 	stack, err := zp.readCallStack()
 	if err != nil {
 		return nil, err
 	}
-	timeReadCallStack := time.Now()
 
-	result := new(SpyResult)
-	result.Stack = stack
-	result.Durations.AttachDuration = timeAttached.Sub(timeStart)
-	result.Durations.WaitDuration = timeWaited.Sub(timeAttached)
-	result.Durations.ReadCallStackDuration = timeReadCallStack.Sub(timeWaited)
-	result.Durations.TotalDuration = timeReadCallStack.Sub(timeStart)
-
-	return result, nil
+	return &SpyResult{stack}, nil
 }
 
 // Parses /proc/{pid} data and uses elf to find the call_stack address.

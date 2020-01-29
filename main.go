@@ -58,7 +58,9 @@ func main() {
 	for spy {
 		start := time.Now()
 		if result, err := zp.Spy(); err != nil {
-			log.Fatalf("Failed to spy: %v\n", err)
+			log.Printf("[WARN]: Failed to spy, exiting (%v)\n", err)
+			spy = false
+			break
 		} else {
 			profileBuilder.AddSample(result.Stack)
 		}
