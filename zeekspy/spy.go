@@ -2,7 +2,7 @@
 //
 // TODO: make some effort to abstract GCC specifics (?)
 //
-package main
+package zeekspy
 
 import (
 	"bufio"

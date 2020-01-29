@@ -1,5 +1,5 @@
 // Given a stack, build up tables to be flushed out to the protobuf
-package main
+package zeekspy
 
 import (
 	"compress/gzip"
@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/awelzel/zeek-spy/perftools_profiles"
 	"github.com/golang/protobuf/proto"
-	"pprof_profile" // This looks like a hack
 )
 
 type profileBuilder struct {
@@ -99,16 +99,16 @@ func (b *profileBuilder) AddSample(stack []Call) {
 
 func (b *profileBuilder) WriteProfile(w io.Writer) ([]byte, error) {
 
-	samplesValueType := pprof_profile.ValueType{
+	samplesValueType := perftools_profiles.ValueType{
 		Type: b.GetStringIndex("samples"),
 		Unit: b.GetStringIndex("count"),
 	}
-	cpuValueType := pprof_profile.ValueType{
+	cpuValueType := perftools_profiles.ValueType{
 		Type: b.GetStringIndex("cpu"),
 		Unit: b.GetStringIndex("nanoseconds"),
 	}
 
-	samples := make([]*pprof_profile.Sample, len(b.samples))
+	samples := make([]*perftools_profiles.Sample, len(b.samples))
 	for i, locationIds := range b.samples {
 
 		// Reverse locations (https://github.com/golang/go/wiki/SliceTricks#reversing)
@@ -117,36 +117,36 @@ func (b *profileBuilder) WriteProfile(w io.Writer) ([]byte, error) {
 			locationIds[j], locationIds[opp] = locationIds[opp], locationIds[j]
 		}
 
-		samples[i] = new(pprof_profile.Sample)
+		samples[i] = new(perftools_profiles.Sample)
 		samples[i].LocationId = locationIds
 		samples[i].Value = []int64{1, int64(b.period)}
 	}
 
-	functions := make([]*pprof_profile.Function, len(b.functionsMap))
+	functions := make([]*perftools_profiles.Function, len(b.functionsMap))
 	i := 0
 	for funcKey, funcId := range b.functionsMap {
-		functions[i] = new(pprof_profile.Function)
+		functions[i] = new(perftools_profiles.Function)
 		functions[i].Id = funcId
 		functions[i].Name = funcKey.NameId
 		functions[i].Filename = funcKey.FilenameId
 		i++
 	}
 
-	locations := make([]*pprof_profile.Location, len(b.locationsMap))
+	locations := make([]*perftools_profiles.Location, len(b.locationsMap))
 
 	i = 0
 	for locKey, locId := range b.locationsMap {
-		locations[i] = new(pprof_profile.Location)
+		locations[i] = new(perftools_profiles.Location)
 		locations[i].Id = locId
-		locations[i].Line = make([]*pprof_profile.Line, 1)
-		locations[i].Line[0] = new(pprof_profile.Line)
+		locations[i].Line = make([]*perftools_profiles.Line, 1)
+		locations[i].Line[0] = new(perftools_profiles.Line)
 		locations[i].Line[0].FunctionId = locKey.FuncId
 		locations[i].Line[0].Line = int64(locKey.Line)
 		i++
 	}
 
-	p := pprof_profile.Profile{
-		SampleType:        []*pprof_profile.ValueType{&samplesValueType, &cpuValueType},
+	p := perftools_profiles.Profile{
+		SampleType:        []*perftools_profiles.ValueType{&samplesValueType, &cpuValueType},
 		Sample:            samples,
 		Function:          functions,
 		Location:          locations,

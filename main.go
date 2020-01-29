@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"runtime"
 	"time"
+
+	"github.com/awelzel/zeek-spy/zeekspy"
 )
 
 func init() {
@@ -47,10 +49,10 @@ func main() {
 
 	log.Printf("Using pid=%d, hz=%v period=%v profile=%v",
 		pid, hz, period, zeekprofile)
-	zp := ZeekProcessFromPid(pid)
+	zp := zeekspy.ZeekProcessFromPid(pid)
 	log.Printf("Profiling %s", zp)
 
-	profileBuilder := NewProfileBuilder(period)
+	profileBuilder := zeekspy.NewProfileBuilder(period)
 
 	spy := true
 	for spy {

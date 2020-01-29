@@ -1,7 +1,7 @@
-# zeek-spy
+# zeek-spy - Sampling Profiler for Zeek
 
 Spy on a `zeek` process using `ptrace(2)`, `elf` and hard-coded memory
-offsets to create pprof profiles of Zeek script land.
+offsets and sample the `call_stack` to create pprof profiles.
 
 ## Compatibility / Caution
 
@@ -15,7 +15,7 @@ offsets related to the memory layout of `std::vector`, `std::string`,
 and/or compiler version.
 
 Those offsets were determined with `gdb`, `dwarfdump` and sometimes counting.
-Presumably the `dwarfdump` approach could be done programmatically.
+Presumably the `dwarfdump` approach could be done programmatically, oh well.
 
 Clang/LLVM - nope, not tested and guaranteed to not work at this point.
 
@@ -30,18 +30,24 @@ Clang/LLVM - nope, not tested and guaranteed to not work at this point.
 
     # Analyze
     $ pprof -ignore=empty_call_stack -trim=false -lines  ./zeek.pb.gz
+    Main binary filename not available.
+    Type: samples
+    Time: Jan 29, 2020 at 2:10am (CET)
+    Duration: 16.58s, Total samples = 4045
+    Entering interactive mode (type "help" for commands, "o" for options)
     (pprof) text
     Active filters:
        ignore=empty_call_stack
-    Showing nodes accounting for 9031, 68.29% of 13225 total
-    Dropped 81 nodes (cum <= 66)
+    Showing nodes accounting for 2602, 64.33% of 4045 total
           flat  flat%   sum%        cum   cum%
-          4997 37.78% 37.78%       4997 37.78%  sha1_hash /opt/zeek/share/zeek/base/init-bare.zeek:5171
-          1626 12.29% 50.08%       1626 12.29%  MyDNS::hashit /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:20
-          1525 11.53% 61.61%       1525 11.53%  fmt /opt/zeek/share/zeek/base/init-bare.zeek:5171
-           877  6.63% 68.24%        877  6.63%  dns_request /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:7
-             4  0.03% 68.27%       1471 11.12%  schedule_me /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:29
-             2 0.015% 68.29%       6678 50.50%  dns_request /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:26
+           664 16.42% 16.42%        664 16.42%  sha256_hash /opt/zeek/share/zeek/base/init-bare.zeek:5171
+           520 12.86% 29.27%        520 12.86%  sha1_hash /opt/zeek/share/zeek/base/init-bare.zeek:5171
+           434 10.73% 40.00%        434 10.73%  fmt /opt/zeek/share/zeek/base/init-bare.zeek:5171
+           390  9.64% 49.64%        390  9.64%  md5_hash /opt/zeek/share/zeek/base/init-bare.zeek:5171
+           377  9.32% 58.96%        377  9.32%  SlowDNS::hashit /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:19
+           207  5.12% 64.08%        207  5.12%  dns_request /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:7
+             2 0.049% 64.13%          2 0.049%  DNS::set_session /opt/zeek/share/zeek/base/protocols/dns/main.zeek:110
+             2 0.049% 64.18%          2 0.049%  dns_request /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:9
 
     # Or browse the profile interactively
     $ pprof -ignore=empty_call_stack -trim=false -lines  ./zeek.pb.gz
