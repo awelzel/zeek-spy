@@ -15,7 +15,7 @@ offsets related to the memory layout of `std::vector`, `std::string`,
 and/or compiler version.
 
 Those offsets were determined with `gdb`, `dwarfdump` and sometimes counting.
-Presumably the `dwarfdump` approach could be done programmatically, oh well.
+Presumably the `dwarfdump` approach could be done programmatically, too.
 
 Clang/LLVM - nope, not tested and guaranteed to not work at this point.
 
