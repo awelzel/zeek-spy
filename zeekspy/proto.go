@@ -97,7 +97,7 @@ func (b *profileBuilder) AddSample(stack []Call) {
 	b.samples = append(b.samples, locations)
 }
 
-func (b *profileBuilder) WriteProfile(w io.Writer) ([]byte, error) {
+func (b *profileBuilder) WriteProfile(w io.Writer) error {
 
 	samplesValueType := perftools_profiles.ValueType{
 		Type: b.GetStringIndex("samples"),
@@ -159,12 +159,13 @@ func (b *profileBuilder) WriteProfile(w io.Writer) ([]byte, error) {
 	}
 	data, err := proto.Marshal(&p)
 	if err != nil {
-		log.Fatalf("Failed marshaling: %v", err)
+		log.Printf("[ERROR] Failed marshaling: %v", err)
+		return err
 	}
 
 	zw := gzip.NewWriter(w)
 	defer zw.Close()
 	zw.Write(data)
 
-	return data, nil
+	return nil
 }
