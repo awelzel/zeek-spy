@@ -20,9 +20,13 @@ Presumably the `dwarfdump` approach could be done programmatically, too.
 Clang/LLVM - nope, not tested and guaranteed to not work at this point.
 
 
-## Usage and Example
+## Usage
 
-    $ zeek-spy -pid $(pgrep zeek) -hz 250 -profile ./zeek.pb.gz
+### Profiling a running `zeek` process
+
+This assumes `pgrep` finds just a single process.
+
+    $ sudo zeek-spy -pid $(pgrep zeek) -hz 250 -profile ./zeek.pb.gz
     ...
     Ctrl+C
     
@@ -52,7 +56,7 @@ Clang/LLVM - nope, not tested and guaranteed to not work at this point.
     # Or browse the profile interactively
     $ pprof -ignore=empty_call_stack -trim=false -lines  ./zeek.pb.gz
 
-## Profiling a PCAP file
+### Profiling processing of a PCAP file
 
 This is a bit of a crutch, but works for demoing purposes.
 

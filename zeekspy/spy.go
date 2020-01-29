@@ -72,6 +72,9 @@ var (
 // XXX: This is *very* GCC (8.3.0), Zeek (3.0.1) and arch (x86_64) specific!
 //      If we'd move the constants into a struct'ish thing, we migth be
 //      a bit more generic.
+//
+// XXX: If the interplay of of call_stack / g_frame_stack ever changes this
+//      will break left and right.
 func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 
 	vecStart, vecFinish, vecData, err := zp.readStdVector(zp.CallStackAddr)
@@ -80,17 +83,14 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 	}
 
 	callStackSize := int(vecFinish-vecStart) / 24
-
 	if callStackSize == 0 {
 		return emptyCallStack, nil
 	}
 
-	result := make([]Call, callStackSize)
-
 	funcBytes := 96
 	funcData := make([]byte, funcBytes)
+	result := make([]Call, callStackSize)
 
-	// Iterate over all CallInfo entries
 	for i := 0; i < callStackSize; i++ {
 		offset := i * 24 // CallInfo is 3 pointers, 24 bytes
 
@@ -142,25 +142,19 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 
 	}
 
-	// If the call_stack was of length 1, consult the g_frame_stack
-	// to find the location of the next_stmt in the first frame there.
-	//
-	// The Func object inside CallInfo points to a `.bif` function,
-	// and not the actul event handler that is running.
-	//
-	// This is a bit of a hack and it would be much nicer if we had
-	// this information available elsewhere.
-	if callStackSize == 1 {
-		frameVecStart, frameVecFinish, frameVecData, err := zp.readStdVector(zp.FrameStackAddr)
-		if err != nil {
-			return nil, err
-		}
-		frameStackSize := (frameVecFinish - frameVecStart) / 8
-		if frameStackSize < 1 {
-			return nil, fmt.Errorf("Bad frameStackSize: %d", frameStackSize)
-		}
+	// Find the approximate location of the current running code
+	// via the top most g_frame_stack Frame->next_stmt.
+	frameVecStart, frameVecFinish, frameVecData, err := zp.readStdVector(zp.FrameStackAddr)
+	if err != nil {
+		return nil, err
+	}
+	frameStackSize := int((frameVecFinish - frameVecStart) / 8)
 
-		framePtr := uintptr(binary.LittleEndian.Uint64(frameVecData[:8]))
+	if frameStackSize > callStackSize {
+		log.Printf("[WARN] %d call_stack entries, %d g_frame_stack entries.\n",
+			callStackSize, frameStackSize)
+	} else if frameStackSize == callStackSize {
+		framePtr := uintptr(binary.LittleEndian.Uint64(frameVecData[len(frameVecData)-8:]))
 		// fmt.Printf("frameStackSize=%d framePtr=0x%x\n", frameStackSize, framePtr)
 
 		// Read the next_stmt pointer and interpret it. It is at offset 144.
@@ -176,23 +170,23 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 			if err != nil {
 				return nil, err
 			}
-			result[0].Filename = filename
-			result[0].Line = line
+
+			result[callStackSize-1].Filename = filename
+			result[callStackSize-1].Line = line
 		}
-		// XXX: It would be nice if we could actually get the proper
-		//      location of the event handler.
 	}
 
-	// XXX: If function at call_stack[0] is at a different location
-	//      then what was found in the `call`, prepend the name/filename/line
-	//      as a separate Call.
+	// XXX: If the function at call_stack[0] is at a different location
+	//      than what was found via `call` or `Frame->next_stmt`, prepend
+	//      the original name/filename/line as a separate Call.
 	//
-	//      This adds a call from a .bif file to the stack.
+	//      This "usually" adds a call from a .bif function to and actual
+	//      event handler implementation to the stack.
+	//
 	f0 := result[0].Func
 	if f0.Filename != result[0].Filename && f0.Line != result[0].Line {
 		result = append([]Call{Call{f0, f0.Filename, f0.Line}}, result...)
 	}
-
 	return result, nil
 }
 
