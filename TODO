@@ -1,0 +1,22 @@
+- Read version symbol and expect "3.0.1"
+
+- Do not be so GCC specific.
+
+  Collect offsets/functions for reading the memory into a separate interface/type.
+  Dispatch based on heuristics.
+
+- Find a way to find out the compiler version or type.
+
+- Use `syscall.StartProcess` and start tracing the child
+
+  https://github.com/leejansq/example/blob/master/ptrace/ptrace.go#L27
+
+  Not sure we actually need to do the ptrace attach dance. We can just
+  start tracing the resulting process instead.
+
+
+- use `process_vm_readv` without stopping the process?
+
+  http://man7.org/linux/man-pages/man2/process_vm_readv.2.html
+
+  There does not seem to be a wrapper for x86_64 linux.
