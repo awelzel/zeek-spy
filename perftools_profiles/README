@@ -1,0 +1,7 @@
+Fetched from:
+    https://github.com/google/pprof/tree/master/proto
+
+Generated with:
+    protoc --go_out=. profile.proto
+
+There is probably a proper way without committing auto generated code.
