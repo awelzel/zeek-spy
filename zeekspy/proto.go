@@ -57,8 +57,8 @@ func (b *profileBuilder) GetStringIndex(s string) int64 {
 	return i
 }
 
-func (b *profileBuilder) GetFunctionId(filename, name string, line int64) uint64 {
-	key := FunctionKey{b.GetStringIndex(filename), b.GetStringIndex(name), line}
+func (b *profileBuilder) GetFunctionId(filename, name string, line int) uint64 {
+	key := FunctionKey{b.GetStringIndex(filename), b.GetStringIndex(name), int64(line)}
 
 	if i, ok := b.functionsMap[key]; ok {
 		return i
@@ -86,10 +86,10 @@ func (b *profileBuilder) AddSample(stack []Call) {
 		fn := c.Filename
 		line := c.Line
 		if fn == "" {
-			fn = c.Func.Filename
-			line = c.Func.Line
+			fn = c.Func.Loc.Filename
+			line = c.Func.Loc.Start
 		}
-		funcId := b.GetFunctionId(fn, c.Func.Name, int64(line))
+		funcId := b.GetFunctionId(fn, c.Func.Name, line)
 
 		locId := b.GetLocationId(funcId, line)
 		locations[i] = locId

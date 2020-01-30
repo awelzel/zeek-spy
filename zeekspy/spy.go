@@ -44,24 +44,32 @@ const (
 )
 
 // This is one entry of the stack
-//
-// Filename and Line are only filled if
 type Call struct {
-	Func     Func
-	Filename string // from CallInfo->call->location->filename of next entry
+	Func     *Func
+	Filename string
 	Line     int
+}
+
+type Location struct {
+	Filename string
+	Start    int
+	End      int
 }
 
 type Func struct {
-	Addr     uintptr
-	Name     string
-	Kind     int
-	Filename string // Func->location->filename
-	Line     int
+	Addr uintptr
+	Name string
+	Kind int
+	Loc  *Location
+}
+
+func (f *Func) String() string {
+	return fmt.Sprintf("Func{%s %s:%d-%d}", f.Name, f.Loc.Filename, f.Loc.Start, f.Loc.End)
 }
 
 var (
-	emptyCallStack = []Call{Call{Func{0, "<empty_call_stack>", 1, "<zeek>", 0}, "<zeek>", 0}}
+	emptyCallStack = []Call{Call{&Func{0, "<empty_call_stack>", 1, &Location{"<zeek>", 0, 0}}, "<zeek>", 0}}
+	nullLocation   = Location{"", 0, 0}
 )
 
 // Read all CallInfo entries stored in the call_stack vector.
@@ -87,8 +95,6 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		return emptyCallStack, nil
 	}
 
-	funcBytes := 96
-	funcData := make([]byte, funcBytes)
 	result := make([]Call, callStackSize)
 
 	for i := 0; i < callStackSize; i++ {
@@ -100,64 +106,45 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		// If there is a callPtr, update the previous Call instance
 		// to include the location information from it.
 		if callPtr > 0 && i > 0 {
-			filename, line, err := zp.readLocationFromBroObj(callPtr)
+			loc, err := zp.readLocationFromBroObj(callPtr)
 			if err != nil {
 				return nil, err
 			}
-			result[i-1].Filename = filename
-			result[i-1].Line = line
+			result[i-1].Filename = loc.Filename
+			result[i-1].Line = loc.Start
 		}
 
-		funcPtr := binary.LittleEndian.Uint64(vecData[offset+8 : offset+16])
-
-		_, err = syscall.PtracePeekData(zp.Pid, uintptr(funcPtr), funcData)
-		if err != nil {
-			if err == nil {
-				err = errors.New("peeking funcPtr failed")
-			}
-			return nil, err
-		}
-
-		kindValue := binary.LittleEndian.Uint64(funcData[56:64])
-		cStrPointer := binary.LittleEndian.Uint64(funcData[72:80])
-
-		funcName, err := zp.readNullTerminatedStr(uintptr(cStrPointer))
+		funcPtr := uintptr(binary.LittleEndian.Uint64(vecData[offset+8 : offset+16]))
+		funcObj, err := zp.readFuncObject(funcPtr)
 		if err != nil {
 			return nil, err
 		}
-		kind := BRO_FUNC
-		if kindValue > 0 {
-			kind = BUILTIN_FUNC
-		}
-
-		locPtr := uintptr(binary.LittleEndian.Uint64(funcData[8:16]))
-		filename, line, err := zp.readLocation(locPtr)
-		if err != nil {
-			return nil, err
-		}
-
-		f := Func{uintptr(funcPtr), funcName, kind, filename, line}
-		result[i] = Call{f, "", 0}
-		// log.Printf("result[%d]=%+v (funcPtr=%#x)\n", i, result[i], funcPtr)
-
+		result[i] = Call{funcObj, "", 0}
 	}
 
 	// Find the approximate location of the current running code
-	// via the top most g_frame_stack Frame->next_stmt.
+	// via the top most g_frame_stack Frame->next_stmt, but only
+	// if g_frame_stack and call_stack have the same size.
 	frameVecStart, frameVecFinish, frameVecData, err := zp.readStdVector(zp.FrameStackAddr)
 	if err != nil {
 		return nil, err
 	}
 	frameStackSize := int((frameVecFinish - frameVecStart) / 8)
+	if frameStackSize >= callStackSize {
 
-	if frameStackSize > callStackSize {
-		log.Printf("[WARN] %d call_stack entries, %d g_frame_stack entries.\n",
-			callStackSize, frameStackSize)
-	} else if frameStackSize == callStackSize {
-		framePtr := uintptr(binary.LittleEndian.Uint64(frameVecData[len(frameVecData)-8:]))
-		// fmt.Printf("frameStackSize=%d framePtr=0x%x\n", frameStackSize, framePtr)
+		// Use the "right" frame if len(g_frame_stack) > len(call_stack)
+		framePtrOffset := len(frameVecData) - (frameStackSize-callStackSize+1)*8
+		framePtr := uintptr(binary.LittleEndian.Uint64(frameVecData[framePtrOffset : framePtrOffset+8]))
 
-		// Read the next_stmt pointer and interpret it. It is at offset 144.
+		/*
+			if frameStackSize > callStackSize {
+				log.Printf("Fixing it up: %d %d call_stack=%d g_frame_stack=%d",
+					framePtrOffset, len(frameVecData), callStackSize, frameStackSize)
+			}
+		*/
+
+		// Read the next_stmt pointer of the Frame and interpret it.
+		// It is at offset 144.
 		stmtData := make([]byte, 8)
 		_, err = syscall.PtracePeekData(zp.Pid, framePtr+144, stmtData)
 		if err != nil {
@@ -166,27 +153,37 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		stmtPtr := uintptr(binary.LittleEndian.Uint64(stmtData[:8]))
 
 		if stmtPtr > 0 {
-			filename, line, err := zp.readLocationFromBroObj(stmtPtr)
+			loc, err := zp.readLocationFromBroObj(stmtPtr)
 			if err != nil {
 				return nil, err
 			}
-
-			result[callStackSize-1].Filename = filename
-			result[callStackSize-1].Line = line
+			result[callStackSize-1].Filename = loc.Filename
+			result[callStackSize-1].Line = loc.Start
+		}
+	} else if callStackSize > frameStackSize {
+		f := result[callStackSize-1].Func
+		if f.Kind != BUILTIN_FUNC {
+			log.Printf("[WARN] call_stack larger, non built-in: %+v\n", f)
 		}
 	}
 
-	// XXX: If the function at call_stack[0] is at a different location
+	//
+	// XXX: If the function at call_stack[0] is in a different file
 	//      than what was found via `call` or `Frame->next_stmt`, prepend
 	//      the original name/filename/line as a separate Call.
 	//
-	//      This "usually" adds a call from a .bif function to and actual
-	//      event handler implementation to the stack.
+	//      This will add a call from a .bif function event handler
+	//      to an actual event handler implementation on the stack.
 	//
 	f0 := result[0].Func
-	if f0.Filename != result[0].Filename && f0.Line != result[0].Line {
-		result = append([]Call{Call{f0, f0.Filename, f0.Line}}, result...)
+	if f0.Loc.Filename != result[0].Filename {
+		result = append([]Call{Call{f0, f0.Loc.Filename, f0.Loc.Start}}, result...)
 	}
+
+	// for i, entry := range result {
+	//	log.Printf("result[%d]=%s:%d %+v\n", i, entry.Filename, entry.Line, entry.Func)
+	//}
+
 	return result, nil
 }
 
@@ -211,16 +208,45 @@ func (zp *ZeekProcess) readStdVector(addr uintptr) (uintptr, uintptr, []byte, er
 	return start, finish, data, nil
 }
 
-// A BroObj has its location pointer at offset 8, behind the vtable.
-func (zp *ZeekProcess) readLocationFromBroObj(addr uintptr) (filename string, line int, err error) {
-	data := make([]byte, 16) // vtable(8), locPtr(8)
-	_, err = syscall.PtracePeekData(zp.Pid, uintptr(addr), data)
+// Given a pointer to a Func object, extract name and location information.
+func (zp *ZeekProcess) readFuncObject(addr uintptr) (*Func, error) {
+
+	funcData := make([]byte, 96)
+	_, err := syscall.PtracePeekData(zp.Pid, addr, funcData)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
-	locPtr := binary.LittleEndian.Uint64(data[8:16])
-	filename, line, err = zp.readLocation(uintptr(locPtr))
-	return
+	kindValue := binary.LittleEndian.Uint64(funcData[56:64])
+	kind := BRO_FUNC
+	if kindValue > 0 {
+		kind = BUILTIN_FUNC
+	}
+
+	// std:string at offset 72
+	cStrPointer := uintptr(binary.LittleEndian.Uint64(funcData[72:80]))
+
+	funcName, err := zp.readNullTerminatedStr(cStrPointer)
+	if err != nil {
+		return nil, err
+	}
+
+	locPtr := uintptr(binary.LittleEndian.Uint64(funcData[8:16]))
+	loc, err := zp.readLocation(locPtr)
+	if err != nil {
+		return nil, err
+	}
+	return &Func{addr, funcName, kind, loc}, nil
+}
+
+// A BroObj has its location pointer at offset 8, behind the vtable.
+func (zp *ZeekProcess) readLocationFromBroObj(addr uintptr) (*Location, error) {
+	data := make([]byte, 16) // vtable(8), locPtr(8)
+	_, err := syscall.PtracePeekData(zp.Pid, uintptr(addr), data)
+	if err != nil {
+		return nil, err
+	}
+	locPtr := uintptr(binary.LittleEndian.Uint64(data[8:16]))
+	return zp.readLocation(locPtr)
 
 }
 
@@ -230,27 +256,28 @@ func (zp *ZeekProcess) readLocationFromBroObj(addr uintptr) (filename string, li
 //   filename(8)
 //   first_line(4)
 //   last_line(4)
-func (zp *ZeekProcess) readLocation(addr uintptr) (filename string, line int, err error) {
+func (zp *ZeekProcess) readLocation(addr uintptr) (*Location, error) {
 	if addr == 0 {
-		return
+		return &nullLocation, nil
 	}
 
 	locData := make([]byte, 24)
-	_, err = syscall.PtracePeekData(zp.Pid, addr, locData)
+	_, err := syscall.PtracePeekData(zp.Pid, addr, locData)
 	if err != nil {
-		return
+		return nil, err
 	}
 	cStrPtr := uintptr(binary.LittleEndian.Uint64(locData[8:16]))
 	if cStrPtr == 0 {
-		return
+		return &nullLocation, nil
 	}
-	filename, err = zp.readNullTerminatedStr(cStrPtr)
+	filename, err := zp.readNullTerminatedStr(cStrPtr)
 	if err != nil {
-		return
+		return nil, err
 	}
 	filename = filepath.Clean(filename)
-	line = int(int32(binary.LittleEndian.Uint32(locData[16:20])))
-	return
+	start := int(int32(binary.LittleEndian.Uint32(locData[16:20])))
+	end := int(int32(binary.LittleEndian.Uint32(locData[20:24])))
+	return &Location{filename, start, end}, nil
 }
 
 func (zp *ZeekProcess) readNullTerminatedStr(addr uintptr) (result string, err error) {
