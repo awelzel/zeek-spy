@@ -1,26 +1,43 @@
 # zeek-spy - Sampling Profiler for Zeek
 
-Spy on a `zeek` process using `ptrace(2)`, `elf` and hard-coded
-memory offsets to create pprof profiles.
+**experimental - proof of concept**
 
-## Compatibility / Caution
+## How it works
 
-This was developed against Zeek 3.0.1, compiled with GCC 8.3.0 on `x86_64`.
-Notably, the Zeek packages from software.opensuse.org for Debian 10 in
-version 3.0.1 should be working.
+`zeek-spy` attaches to a running `zeek` process using `ptrace(2)` and reads
+the `call_stack` and `g_frame_stack` memory.
 
-Anything else will (very very) likely not work. The code uses hard-coded
-offsets related to the memory layout of `std::vector`, `std::string`,
+Using the referenced `CallInfo`, `Func`, `Stmt`, `Frame` and `Location` objects,
+a sample (call stack) of Zeek script land is created including function names,
+filenames and line numbers.
+
+Upon termination `zeek-spy` writes all samples as gziped "profile.proto" file.
+This file can then be analyzed with [pprof][1].
+
+The idea was prompted by [rbyspy][2] and [py-spy][3].
+
+## Compatibility / Limitations
+
+This was developed (hacked together) against Zeek 3.0.1, compiled with
+GCC 8.3.0 on `x86_64`. Concretely, the [binary Zeek packages][4] for
+Debian 10 in version 3.0.1 should be working.
+
+Anything else will (very very) likely not work. The current code uses
+hard-coded offsets related to the memory layout of `std::vector`, `std::string`,
 `CallInfo`, `Frame` and more. They may be just wrong for a different Zeek
-and/or compiler version.
+and/or compiler version. C++ does not make this easier, either.
 
-Those offsets were determined with `gdb`, `dwarfdump` and sometimes counting.
-Presumably the `dwarfdump` approach could be done programmatically, too.
-
-Clang/LLVM - nope, not tested and guaranteed to not work at this point.
+Memory locations and offsets were determined with `elf`, `gdb`, `dwarfdump`
+and sometimes just counting.
 
 
 ## Usage
+
+### Sample profile
+
+To look at a provided profile inside this repo.
+
+    $ pprof -http=localhost:9999 -ignore=empty_call_stack -trim=false -filefunctions ./sample-profiles/macdc2012.pb.gz
 
 ### Profiling a running `zeek` process
 
@@ -30,35 +47,52 @@ This assumes `pgrep` finds just a single process.
     ...
     Ctrl+C
     
-    # zeek.pb.gz is in pprof protobuf format (https://github.com/google/pprof/tree/master/proto)
+    # zeek.pb.gz is in profile.proto format (https://github.com/google/pprof/tree/master/proto)
 
-    # Analyze
+    # Analyze with pprof
     $ pprof -ignore=empty_call_stack -trim=false -lines  ./zeek.pb.gz
-    Main binary filename not available.
     Type: samples
-    Time: Jan 29, 2020 at 2:10am (CET)
-    Duration: 16.58s, Total samples = 4045
+    Time: Jan 30, 2020 at 1:35pm (CET)
+    Duration: 31.55s, Total samples = 7661
     Entering interactive mode (type "help" for commands, "o" for options)
-    (pprof) text
     Active filters:
        ignore=empty_call_stack
-    Showing nodes accounting for 2602, 64.33% of 4045 total
+    Showing nodes accounting for 4036, 52.68% of 7661 total
           flat  flat%   sum%        cum   cum%
-           664 16.42% 16.42%        664 16.42%  sha256_hash /opt/zeek/share/zeek/base/init-bare.zeek:5171
-           520 12.86% 29.27%        520 12.86%  sha1_hash /opt/zeek/share/zeek/base/init-bare.zeek:5171
-           434 10.73% 40.00%        434 10.73%  fmt /opt/zeek/share/zeek/base/init-bare.zeek:5171
-           390  9.64% 49.64%        390  9.64%  md5_hash /opt/zeek/share/zeek/base/init-bare.zeek:5171
-           377  9.32% 58.96%        377  9.32%  SlowDNS::hashit /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:19
-           207  5.12% 64.08%        207  5.12%  dns_request /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:7
-             2 0.049% 64.13%          2 0.049%  DNS::set_session /opt/zeek/share/zeek/base/protocols/dns/main.zeek:110
-             2 0.049% 64.18%          2 0.049%  dns_request /home/awelzel/projects/zeek/myscripts/slow_dns.zeek:9
+           549  7.17%  7.17%        549  7.17%  Log::__write
+           436  5.69% 12.86%        436  5.69%  sha256_hash /home/awelzel/projects/zeek/scripts/base/init-bare.zeek:5171
+           269  3.51% 16.37%        269  3.51%  sha1_hash /home/awelzel/projects/zeek/scripts/base/init-bare.zeek:5171
+           245  3.20% 19.57%        245  3.20%  md5_hash /home/awelzel/projects/zeek/scripts/base/init-bare.zeek:5171
+           132  1.72% 21.29%        132  1.72%  connection_state_remove /home/awelzel/projects/zeek/scripts/base/protocols/http/main.zeek:329
+           119  1.55% 22.84%        119  1.55%  connection_state_remove /home/awelzel/projects/zeek/scripts/base/protocols/sip/main.zeek:296
+            83  1.08% 23.93%         83  1.08%  schedule_me scripts/slow_dns.zeek:32
+            78  1.02% 24.94%         78  1.02%  connection_state_remove /home/awelzel/projects/zeek/scripts/base/protocols/dce-rpc/main.zeek:218
+            73  0.95% 25.90%        356  4.65%  dns_request scripts/slow_dns.zeek:12
+            72  0.94% 26.84%         72  0.94%  connection_state_remove /home/awelzel/projects/zeek/scripts/base/protocols/ftp/main.zeek:290
+            60  0.78% 27.62%         60  0.78%  connection_state_remove /home/awelzel/projects/zeek/scripts/base/protocols/socks/main.zeek:119
+            ...
 
-    # Or browse the profile interactively
-    $ pprof -ignore=empty_call_stack -trim=false -lines  ./zeek.pb.gz
+
+    # Or browse the profile interactively in a browser
+    $ pprof -http=localhost:9999 -ignore=empty_call_stack -trim=false -filefunctions ./zeek.pb.gz
+
+
+### Performance Impact
+
+**unclear**
+
+The `zeek` process is stopped while `zeek-spy` takes a sample. A separate
+`ptrace-attach` happens for every sample. Performance may degrade for very
+high and possibly moderate sampling frequencies. The default is 100 hz.
+
+`zeek-spy` is very performance naive, too. There are various ways to improve
+sampling performance. Starting from caching "constant" memory locations,
+switching to `process_vm_readv(2)` and most likely many Go specific tweaks.
+
 
 ### Profiling processing of a PCAP file
 
-This is a bit of a crutch, but works for demoing purposes.
+This is a bit of a crutch and basically the same as above, but nicer for testing:
 
     $ timeout 120 /opt/zeek/bin/zeek -r ./pcaps/maccdc2012_00000.pcap & sleep 0.2 && ./zeek-spy -pid $(pgrep zeek) -hz 250 -profile ./macdc2012.pb.gz
     2020/01/29 16:22:13 Using pid=3262, hz=250 period=4ms profile=./macdc2012.pb.gz
@@ -70,24 +104,23 @@ This is a bit of a crutch, but works for demoing purposes.
     2020/01/29 16:23:13 Writing protobuf...
     2020/01/29 16:23:13 Done.
 
-    # Analyze
-    $ pprof -http=localhost:9999 -ignore=empty_call_stack -lines -trim=false ./macdc2012.pb.gz
 
 
-The PCAP is from https://www.netresec.com/?page=MACCDC
+### pprof flags
 
+As event handlers all have the same function name and do not live in a module,
+depending on the `granularity` setting of `pprof` the output will vary.
 
-## pprof flags
-
-Event handlers have the same function name. Switching `pprof` to "lines"
-granularity helps. It will not group different locations of the same
-handler, however.
+Using `lines` or `filefunctions` gives reasonable results.
 
     $ pprof -ignore=empty_call_stack -trim=false -lines   ./zeek.pb.gz
 
-Using `filefunctions` granularity is an alternative, but it groups two event
-handlers with the same name in the same file together.
+The `-ignore=empty_call_stack` is used to filter out all samples where
+the `call_stack` was empty. This is useful when there's only very little
+traffic and the `empty_call_stack` samples dominate the profile.
 
-    $ pprof -ignore=empty_call_stack -trim=false -filefunctions -lines   ./zeek.pb.gz
 
-There is also `files` granularity.
+[1]: https://github.com/google/pprof
+[2]: https://github.com/rbspy/rbspy
+[3]: https://github.com/benfred/py-spy
+[4]: https://software.opensuse.org//download.html?project=security%3Azeek&package=zeek
