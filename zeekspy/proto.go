@@ -83,15 +83,9 @@ func (b *profileBuilder) GetLocationId(funcId uint64, line int) uint64 {
 func (b *profileBuilder) AddSample(stack []Call) {
 	locations := make([]uint64, len(stack))
 	for i, c := range stack {
-		fn := c.Filename
-		line := c.Line
-		if fn == "" {
-			fn = c.Func.Loc.Filename
-			line = c.Func.Loc.Start
-		}
-		funcId := b.GetFunctionId(fn, c.Func.Name, line)
+		funcId := b.GetFunctionId(c.Func.Loc.Filename, c.Func.Name, c.Func.Loc.Start)
 
-		locId := b.GetLocationId(funcId, line)
+		locId := b.GetLocationId(funcId, c.Line)
 		locations[i] = locId
 	}
 	b.samples = append(b.samples, locations)
@@ -129,6 +123,7 @@ func (b *profileBuilder) WriteProfile(w io.Writer) error {
 		functions[i].Id = funcId
 		functions[i].Name = funcKey.NameId
 		functions[i].Filename = funcKey.FilenameId
+		functions[i].StartLine = funcKey.Line
 		i++
 	}
 

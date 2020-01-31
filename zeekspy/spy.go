@@ -60,7 +60,7 @@ type Func struct {
 	Addr uintptr
 	Name string
 	Kind int
-	Loc  *Location
+	Loc  Location
 }
 
 func (f *Func) String() string {
@@ -68,7 +68,7 @@ func (f *Func) String() string {
 }
 
 var (
-	emptyCallStack = []Call{Call{&Func{0, "<empty_call_stack>", 1, &Location{"<zeek>", 0, 0}}, "<zeek>", 0}}
+	emptyCallStack = []Call{Call{&Func{0, "<empty_call_stack>", 1, Location{"<zeek>", 0, 0}}, "<zeek>", 0}}
 	nullLocation   = Location{"", 0, 0}
 )
 
@@ -136,13 +136,6 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		framePtrOffset := len(frameVecData) - (frameStackSize-callStackSize+1)*8
 		framePtr := uintptr(binary.LittleEndian.Uint64(frameVecData[framePtrOffset : framePtrOffset+8]))
 
-		/*
-			if frameStackSize > callStackSize {
-				log.Printf("Fixing it up: %d %d call_stack=%d g_frame_stack=%d",
-					framePtrOffset, len(frameVecData), callStackSize, frameStackSize)
-			}
-		*/
-
 		// Read the next_stmt pointer of the Frame and interpret it.
 		// It is at offset 144.
 		stmtData := make([]byte, 8)
@@ -170,19 +163,30 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 	//
 	// XXX: If the function at call_stack[0] is in a different file
 	//      than what was found via `call` or `Frame->next_stmt`, prepend
-	//      the original name/filename/line as a separate Call.
+	//      the original name/filename/line as a separate Call and "rewrite"
+	//      the original function to be more in line what the location
+	//      reported...
 	//
-	//      This will add a call from a .bif function event handler
-	//      to an actual event handler implementation on the stack.
+	//      This is a limitations, as there's a single BroObj capturing
+	//      each event handler.
 	//
 	f0 := result[0].Func
 	if f0.Loc.Filename != result[0].Filename {
-		result = append([]Call{Call{f0, f0.Loc.Filename, f0.Loc.Start}}, result...)
+
+		fakeFunc := *f0
+
+		// Update entry to at least point to the right filename
+		f0.Loc.Filename = result[0].Filename
+		f0.Loc.Start = 0 // We just don't know :-(
+		f0.Loc.End = 0
+
+		fakeCall := Call{&fakeFunc, fakeFunc.Loc.Filename, fakeFunc.Loc.Start}
+		result = append([]Call{fakeCall}, result...)
 	}
 
 	// for i, entry := range result {
 	//	log.Printf("result[%d]=%s:%d %+v\n", i, entry.Filename, entry.Line, entry.Func)
-	//}
+	// }
 
 	return result, nil
 }
@@ -235,7 +239,7 @@ func (zp *ZeekProcess) readFuncObject(addr uintptr) (*Func, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Func{addr, funcName, kind, loc}, nil
+	return &Func{addr, funcName, kind, *loc}, nil
 }
 
 // A BroObj has its location pointer at offset 8, behind the vtable.
