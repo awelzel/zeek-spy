@@ -37,6 +37,7 @@ func (zp *ZeekProcess) String() string {
 
 type SpyResult struct {
 	Stack []Call
+	Empty bool
 }
 
 const (
@@ -84,16 +85,16 @@ var (
 //
 // XXX: If the interplay of of call_stack / g_frame_stack ever changes this
 //      will break left and right.
-func (zp *ZeekProcess) readCallStack() ([]Call, error) {
+func (zp *ZeekProcess) readCallStack() ([]Call, bool, error) {
 
 	vecStart, vecFinish, vecData, err := zp.readStdVector(zp.CallStackAddr)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	callStackSize := int(vecFinish-vecStart) / 24
 	if callStackSize == 0 {
-		return emptyCallStack, nil
+		return emptyCallStack, true, nil
 	}
 
 	result := make([]Call, callStackSize)
@@ -109,7 +110,7 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		if callPtr > 0 && i > 0 {
 			loc, err := zp.readLocationFromBroObj(callPtr)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			result[i-1].Filename = loc.Filename
 			result[i-1].Line = loc.Start
@@ -118,7 +119,7 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		funcPtr := uintptr(binary.LittleEndian.Uint64(vecData[offset+8 : offset+16]))
 		funcObj, err := zp.readFuncObject(funcPtr)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		result[i] = Call{funcObj, "", 0}
 	}
@@ -128,7 +129,7 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 	// if g_frame_stack and call_stack have the same size.
 	frameVecStart, frameVecFinish, frameVecData, err := zp.readStdVector(zp.FrameStackAddr)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	frameStackSize := int((frameVecFinish - frameVecStart) / 8)
 	if frameStackSize >= callStackSize {
@@ -142,14 +143,14 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 		stmtData := make([]byte, 8)
 		_, err = syscall.PtracePeekData(zp.Pid, framePtr+144, stmtData)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		stmtPtr := uintptr(binary.LittleEndian.Uint64(stmtData[:8]))
 
 		if stmtPtr > 0 {
 			loc, err := zp.readLocationFromBroObj(stmtPtr)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			result[callStackSize-1].Filename = loc.Filename
 			result[callStackSize-1].Line = loc.Start
@@ -189,7 +190,7 @@ func (zp *ZeekProcess) readCallStack() ([]Call, error) {
 	//	log.Printf("result[%d]=%s:%d %+v\n", i, entry.Filename, entry.Line, entry.Func)
 	// }
 
-	return result, nil
+	return result, false, nil
 }
 
 func (zp *ZeekProcess) readStdVector(addr uintptr) (uintptr, uintptr, []byte, error) {
@@ -355,12 +356,12 @@ func (zp *ZeekProcess) Spy() (*SpyResult, error) {
 		return nil, err
 	}
 
-	stack, err := zp.readCallStack()
+	stack, empty, err := zp.readCallStack()
 	if err != nil {
 		return nil, err
 	}
 
-	return &SpyResult{stack}, nil
+	return &SpyResult{stack, empty}, nil
 }
 
 // Parses /proc/{pid} data and uses elf to find the call_stack address.

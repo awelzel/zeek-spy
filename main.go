@@ -22,6 +22,7 @@ var (
 	pid           int
 	hz            uint
 	zeekprofile   string
+	debug         bool
 	statsInterval time.Duration
 )
 
@@ -29,6 +30,7 @@ func main() {
 	fiveSeconds, _ := time.ParseDuration("5s")
 	flag.IntVar(&pid, "pid", 0, "PID of Zeek process")
 	flag.UintVar(&hz, "hz", 100, "Sampling frequency")
+	flag.BoolVar(&debug, "debug", false, "Enable sample debugging")
 	flag.StringVar(&zeekprofile, "profile", "", "Store pprof `profile` here")
 	flag.DurationVar(&statsInterval, "stats", fiveSeconds,
 		"Print stats every `interval` times.")
@@ -66,6 +68,7 @@ func main() {
 	stopped := false
 	statsSamplingTime := time.Duration(0)
 	totalSamples := 0
+	nonEmptySamples := 0
 	totalSkipped := 0
 	totalStart := time.Now()
 	nextSample := totalStart
@@ -82,6 +85,16 @@ func main() {
 			diff = time.Since(start)
 			totalSamples += 1
 			profileBuilder.AddSample(result.Stack)
+			if !result.Empty {
+				nonEmptySamples = nonEmptySamples + 1
+				if debug {
+					for i, s := range result.Stack {
+						log.Printf("Sample[%d][%d] %+v\n",
+							totalSamples, i, s)
+					}
+				}
+			}
+
 		}
 
 		statsSamplingTime += diff
@@ -102,8 +115,8 @@ func main() {
 			fraction := statsSamplingTime.Seconds() / statsInterval.Seconds()
 			samplingRate := float64(totalSamples) / time.Since(totalStart).Seconds()
 
-			log.Printf("[STATS] elapsed=%.2fs samples=%d skipped=%d frequency=%.1fhz overhead=%.2f%% (%v)\n",
-				elapsed.Seconds(), totalSamples, totalSkipped,
+			log.Printf("[STATS] elapsed=%.2fs samples=%d (%d total) skipped=%d frequency=%.1fhz overhead=%.2f%% (%v)\n",
+				elapsed.Seconds(), nonEmptySamples, totalSamples, totalSkipped,
 				samplingRate, fraction*100, statsSamplingTime)
 			nextStats = nextStats.Add(statsInterval)
 			statsSamplingTime = time.Duration(0)
