@@ -51,11 +51,15 @@ func main() {
 
 	period := time.Duration((1000000 / hz)) * time.Microsecond
 
-	log.Printf("Using pid=%d, hz=%v period=%v (%.6f ms) profile=%v",
+	log.Printf("Using pid=%d, hz=%v period=%v (%.6f ms) profile=%v\n",
 		pid, hz, period, period.Seconds()*1000, zeekprofile)
-
 	zp := zeekspy.ZeekProcessFromPid(pid)
-	log.Printf("Profiling %s", zp)
+	log.Printf("Profiling %s\n", zp)
+	if version, err := zp.Version(); err == nil {
+		log.Printf("Found Zeek version '%s'", version)
+	} else {
+		log.Fatalf("Error reading version: %v", err)
+	}
 
 	profileBuilder := zeekspy.NewProfileBuilder(period)
 

@@ -27,11 +27,12 @@ type ZeekProcess struct {
 	LoadAddr       uintptr
 	CallStackAddr  uintptr
 	FrameStackAddr uintptr
+	VersionAddr    uintptr
 }
 
 func (zp *ZeekProcess) String() string {
-	return fmt.Sprintf("ZeekProcess{Pid=%d, Exe=%s, LoadAddr=0x%x, CallStackAddr=0x%x, FrameStackAddr=0x%x}",
-		zp.Pid, zp.Exe, zp.LoadAddr, zp.CallStackAddr, zp.FrameStackAddr)
+	return fmt.Sprintf("ZeekProcess{Pid=%d, Exe=%s, LoadAddr=%#x, CallStackAddr=%#x, FrameStackAddr=%#x VersionAddr=%#x}",
+		zp.Pid, zp.Exe, zp.LoadAddr, zp.CallStackAddr, zp.FrameStackAddr, zp.VersionAddr)
 }
 
 type SpyResult struct {
@@ -330,6 +331,17 @@ func (zp *ZeekProcess) detach() {
 	}
 }
 
+// Read the version from the process
+func (zp *ZeekProcess) Version() (string, error) {
+	if err := zp.attach(); err != nil {
+		log.Printf("ptrace attach failed for %d: %v\n", zp.Pid, err)
+		return "", err
+	}
+	defer zp.detach()
+
+	return zp.readNullTerminatedStr(zp.VersionAddr)
+}
+
 func (zp *ZeekProcess) Spy() (*SpyResult, error) {
 
 	if err := zp.attach(); err != nil {
@@ -357,7 +369,7 @@ func ZeekProcessFromPid(pid int) *ZeekProcess {
 	var err error
 	var exe string
 	var symbols []elf.Symbol
-	var callStackSym, frameStackSym elf.Symbol
+	var callStackSym, frameStackSym, versionSym elf.Symbol
 
 	exeLink := fmt.Sprintf("/proc/%d/exe", pid)
 	if exe, err = os.Readlink(exeLink); err != nil {
@@ -380,9 +392,11 @@ func ZeekProcessFromPid(pid int) *ZeekProcess {
 			callStackSym = symbol
 		} else if symbol.Name == "g_frame_stack" {
 			frameStackSym = symbol
+		} else if symbol.Name == "version" {
+			versionSym = symbol
 		}
 
-		if callStackSym.Value != 0 && frameStackSym.Value != 0 {
+		if callStackSym.Value != 0 && frameStackSym.Value != 0 && versionSym.Value != 0 {
 			break
 		}
 	}
@@ -392,11 +406,20 @@ func ZeekProcessFromPid(pid int) *ZeekProcess {
 	if frameStackSym.Value == 0 {
 		log.Fatalf("Could not find g_frame_stack symbol in %s", exe)
 	}
+	if versionSym.Value == 0 {
+		log.Fatalf("Could not find version symbol in %s", exe)
+	}
 
 	frameStackAddr := loadAddr + uintptr(frameStackSym.Value)
 	callStackAddr := loadAddr + uintptr(callStackSym.Value)
-	zp := ZeekProcess{pid, exe, loadAddr, callStackAddr, frameStackAddr}
-	return &zp
+	versionAddr := loadAddr + uintptr(versionSym.Value)
+	return &ZeekProcess{
+		Pid:            pid,
+		Exe:            exe,
+		LoadAddr:       loadAddr,
+		CallStackAddr:  callStackAddr,
+		FrameStackAddr: frameStackAddr,
+		VersionAddr:    versionAddr}
 }
 
 // Parse /proc/<pid>/maps and return the lowest address for exeFilename
