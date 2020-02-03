@@ -335,7 +335,6 @@ func (zp *ZeekProcess) detach() {
 // Read the version from the process
 func (zp *ZeekProcess) Version() (string, error) {
 	if err := zp.attach(); err != nil {
-		log.Printf("ptrace attach failed for %d: %v\n", zp.Pid, err)
 		return "", err
 	}
 	defer zp.detach()
@@ -346,13 +345,12 @@ func (zp *ZeekProcess) Version() (string, error) {
 func (zp *ZeekProcess) Spy() (*SpyResult, error) {
 
 	if err := zp.attach(); err != nil {
-		log.Printf("ptrace attach failed for %d: %v\n", zp.Pid, err)
 		return nil, err
 	}
 	defer zp.detach()
 
 	if err := zp.wait(); err != nil {
-		fmt.Printf("wait failed for %d: %v!\n", zp.Pid, err)
+		log.Printf("[WARN] wait() failed for %d: %v!\n", zp.Pid, err)
 		return nil, err
 	}
 
