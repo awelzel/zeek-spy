@@ -19,15 +19,19 @@ func init() {
 }
 
 var (
-	pid         int
-	hz          uint
-	zeekprofile string
+	pid           int
+	hz            uint
+	zeekprofile   string
+	statsInterval time.Duration
 )
 
 func main() {
+	fiveSeconds, _ := time.ParseDuration("5s")
 	flag.IntVar(&pid, "pid", 0, "PID of Zeek process")
 	flag.UintVar(&hz, "hz", 100, "Sampling frequency")
 	flag.StringVar(&zeekprofile, "profile", "", "Store pprof `profile` here")
+	flag.DurationVar(&statsInterval, "stats", fiveSeconds,
+		"Print stats every `interval` times.")
 	flag.Parse()
 
 	if pid == 0 || zeekprofile == "" {
@@ -47,57 +51,58 @@ func main() {
 
 	period := time.Duration((1000000 / hz)) * time.Microsecond
 
-	log.Printf("Using pid=%d, hz=%v period=%v profile=%v",
-		pid, hz, period, zeekprofile)
+	log.Printf("Using pid=%d, hz=%v period=%v (%.6f ms) profile=%v",
+		pid, hz, period, period.Seconds()*1000, zeekprofile)
+
 	zp := zeekspy.ZeekProcessFromPid(pid)
 	log.Printf("Profiling %s", zp)
 
 	profileBuilder := zeekspy.NewProfileBuilder(period)
 
-	spy := true
-	lastStatsAt := time.Now()
-	statsInterval := time.Duration(1) * time.Second
-	samplingTime := time.Duration(0)
+	stopped := false
+	statsSamplingTime := time.Duration(0)
 	totalSamples := 0
+	totalSkipped := 0
+	totalStart := time.Now()
+	nextSample := totalStart
+	nextStats := totalStart.Add(statsInterval)
+	diff := time.Duration(0)
 
-	for spy {
+	for !stopped {
 		start := time.Now()
 		if result, err := zp.Spy(); err != nil {
 			log.Printf("[WARN] Failed to spy, exiting (%v)\n", err)
-			spy = false
+			stopped = true
 			break
 		} else {
+			diff = time.Since(start)
 			totalSamples += 1
 			profileBuilder.AddSample(result.Stack)
 		}
-		/* for i, s := range result.Stack {
-			log.Printf("Stack[%d] %+v\n", i, s)
-		} */
 
-		diff := time.Since(start)
-		samplingTime += diff
+		statsSamplingTime += diff
+		skippedSamples := int(diff / period)
+		totalSkipped += skippedSamples
+		nextSample = nextSample.Add(time.Duration(1+skippedSamples) * period)
 
-		sleepFor := ((diff/period + 1) * period) - diff
-		if diff > period {
-			log.Printf("[WARN] Took %v to sample, period is %v - sleeping for %v\n",
-				diff, period, sleepFor)
-		}
-
-		if elapsed := time.Since(lastStatsAt); elapsed > statsInterval {
-			fraction := samplingTime.Seconds() / elapsed.Seconds()
-			log.Printf("[STATS] overhead: %.2f %% (%v sampling, %v elapsed)\n",
-				fraction*100, samplingTime, elapsed)
-			lastStatsAt = time.Now()
-			samplingTime = time.Duration(0)
-		}
-
-		// Sleep for the next round, stop if a signal came in
 		select {
-		case <-time.After(sleepFor):
+		case <-time.After(time.Until(nextSample)):
 			//
 		case sig := <-signalChannel:
 			log.Printf("Exiting after signal: %v\n", sig)
-			spy = false
+			stopped = true
+		}
+
+		if now := time.Now(); now.After(nextStats) {
+			elapsed := now.Sub(totalStart)
+			fraction := statsSamplingTime.Seconds() / statsInterval.Seconds()
+			samplingRate := float64(totalSamples) / time.Since(totalStart).Seconds()
+
+			log.Printf("[STATS] elapsed=%.2fs samples=%d skipped=%d frequency=%.1fhz overhead=%.2f%% (%v)\n",
+				elapsed.Seconds(), totalSamples, totalSkipped,
+				samplingRate, fraction*100, statsSamplingTime)
+			nextStats = nextStats.Add(statsInterval)
+			statsSamplingTime = time.Duration(0)
 		}
 	}
 	log.Printf("Writing protobuf...\n")
