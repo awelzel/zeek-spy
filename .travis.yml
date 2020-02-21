@@ -1,0 +1,28 @@
+language: go
+dist: bionic
+
+script:
+  - sudo sh -c "echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_18.04/ /' > /etc/apt/sources.list.d/security:zeek.list"
+  - wget -nv https://download.opensuse.org/repositories/security:zeek/xUbuntu_18.04/Release.key -O Release.key
+  - sudo apt-key add - < Release.key
+  - sudo apt-get update
+  - sudo apt-get install -y --no-install-recommends zeek zeek-core zeekctl tcpreplay
+  - ip link
+
+  - go get -u github.com/google/pprof
+  - go build
+  - go test -v ./zeekspy
+
+  # Run zeek listening on lo, start zeek-spy, then tcpreplay a sample pcap
+  - mkdir logs
+  - sudo timeout 4 sudo sh -c "cd ./logs; /opt/zeek/bin/zeek -i lo -C" &
+  - sleep 0.1
+  - sudo ./zeek-spy -stats 1s -hz 300 -pid $(pgrep zeek) -profile ./zeek.pb.gz &
+  - sudo tcpreplay -t -l 5000 -i lo ./pcaps/http-filename.pcap
+
+  # Wait for zeek and in turn zeek-spy to terminate
+  - while pgrep zeek-spy > /dev/null ; do sleep 1 ; done
+
+  # Check the profile for some usual suspects
+  - echo "text" | pprof -lines ./zeek.pb.gz 2>/dev/null | tee -a profile.txt
+  - grep -q 'Log::__write' ./profile.txt && grep -q 'empty_call_stack' ./profile.txt
