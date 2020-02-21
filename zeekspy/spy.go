@@ -339,6 +339,11 @@ func (zp *ZeekProcess) Version() (string, error) {
 	}
 	defer zp.detach()
 
+	if err := zp.wait(); err != nil {
+		log.Printf("[WARN] wait() failed for %d: %v!\n", zp.Pid, err)
+		return "", err
+	}
+
 	return zp.readNullTerminatedStr(zp.VersionAddr)
 }
 
