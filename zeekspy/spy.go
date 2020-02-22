@@ -24,6 +24,7 @@ import (
 type ZeekProcess struct {
 	Pid            int
 	Exe            string
+	offsets        *StructOffsets
 	LoadAddr       uintptr
 	CallStackAddr  uintptr
 	FrameStackAddr uintptr
@@ -228,6 +229,7 @@ func (zp *ZeekProcess) readFuncObject(addr uintptr) (*Func, error) {
 		kind = BUILTIN_FUNC
 	}
 
+	// fmt.Printf("[DEBUG] Reading name at 72:80\n")
 	// std:string at offset 72
 	cStrPointer := uintptr(binary.LittleEndian.Uint64(funcData[72:80]))
 
@@ -236,6 +238,7 @@ func (zp *ZeekProcess) readFuncObject(addr uintptr) (*Func, error) {
 		return nil, err
 	}
 
+	// fmt.Printf("[DEBUG] Reading location at 8:16\n")
 	locPtr := uintptr(binary.LittleEndian.Uint64(funcData[8:16]))
 	loc, err := zp.readLocation(locPtr)
 	if err != nil {
@@ -267,23 +270,27 @@ func (zp *ZeekProcess) readLocation(addr uintptr) (*Location, error) {
 		return &nullLocation, nil
 	}
 
-	locData := make([]byte, 24)
+	locData := make([]byte, zp.offsets.LocationSize)
 	_, err := syscall.PtracePeekData(zp.Pid, addr, locData)
 	if err != nil {
 		return nil, err
 	}
-	cStrPtr := uintptr(binary.LittleEndian.Uint64(locData[8:16]))
-	if cStrPtr == 0 {
+	nameData := locData[zp.offsets.LocationFilename : zp.offsets.LocationFilename+8]
+	namePtr := uintptr(binary.LittleEndian.Uint64(nameData))
+	if namePtr == 0 {
 		return &nullLocation, nil
 	}
-	filename, err := zp.readNullTerminatedStr(cStrPtr)
+	filename, err := zp.readNullTerminatedStr(namePtr)
 	if err != nil {
 		return nil, err
 	}
 	filename = filepath.Clean(filename)
-	start := int(int32(binary.LittleEndian.Uint32(locData[16:20])))
-	end := int(int32(binary.LittleEndian.Uint32(locData[20:24])))
-	return &Location{filename, start, end}, nil
+
+	startData := locData[zp.offsets.LocationFirstLine : zp.offsets.LocationFirstLine+4]
+	start := int(int32(binary.LittleEndian.Uint32(startData)))
+	lastData := locData[zp.offsets.LocationLastLine : zp.offsets.LocationLastLine+4]
+	last := int(int32(binary.LittleEndian.Uint32(lastData)))
+	return &Location{filename, start, last}, nil
 }
 
 func (zp *ZeekProcess) readNullTerminatedStr(addr uintptr) (result string, err error) {
@@ -293,6 +300,7 @@ func (zp *ZeekProcess) readNullTerminatedStr(addr uintptr) (result string, err e
 	for {
 		_, err := syscall.PtracePeekData(zp.Pid, addr, data)
 		if err != nil {
+			fmt.Printf("PtracePeekData error: %v\n", err)
 			return "", err
 		}
 
@@ -305,6 +313,7 @@ func (zp *ZeekProcess) readNullTerminatedStr(addr uintptr) (result string, err e
 		addr += uintptr(size)
 	}
 done:
+	// fmt.Printf("[DEBUG] Finished reading. got: %v\n", buffer.String())
 	return buffer.String(), nil
 }
 
@@ -340,7 +349,7 @@ func (zp *ZeekProcess) Version() (string, error) {
 	defer zp.detach()
 
 	if err := zp.wait(); err != nil {
-		log.Printf("[WARN] wait() failed for %d: %v!\n", zp.Pid, err)
+		log.Printf("[WARN] wait() failed for %d: %v\n", zp.Pid, err)
 		return "", err
 	}
 
@@ -355,7 +364,7 @@ func (zp *ZeekProcess) Spy() (*SpyResult, error) {
 	defer zp.detach()
 
 	if err := zp.wait(); err != nil {
-		log.Printf("[WARN] wait() failed for %d: %v!\n", zp.Pid, err)
+		log.Printf("[WARN] wait() failed for %d: %v\n", zp.Pid, err)
 		return nil, err
 	}
 
@@ -417,13 +426,26 @@ func ZeekProcessFromPid(pid int) *ZeekProcess {
 	frameStackAddr := loadAddr + uintptr(frameStackSym.Value)
 	callStackAddr := loadAddr + uintptr(callStackSym.Value)
 	versionAddr := loadAddr + uintptr(versionSym.Value)
-	return &ZeekProcess{
+
+	zp := &ZeekProcess{
 		Pid:            pid,
 		Exe:            exe,
+		offsets:        nil,
 		LoadAddr:       loadAddr,
 		CallStackAddr:  callStackAddr,
 		FrameStackAddr: frameStackAddr,
-		VersionAddr:    versionAddr}
+		VersionAddr:    versionAddr,
+	}
+	version, err := zp.Version()
+	if err != nil {
+		log.Fatalf("Could not determine version: %v\n", err)
+	}
+	offsets, ok := getStructOffsets(version)
+	if !ok {
+		log.Fatalf("Could not find offsets for %v\n", version)
+	}
+	zp.offsets = offsets
+	return zp
 }
 
 // Parse /proc/<pid>/maps and return the lowest address for exeFilename
