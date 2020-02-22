@@ -8,8 +8,8 @@ import (
 func TestAddSample(t *testing.T) {
 
 	b := NewProfileBuilder(time.Duration(1))
-	f := Func{123, "dns_message", 0, "dns.bif", 442}
-	c := Call{f, "test/data.zeek", 42}
+	f := Func{123, "dns_message", 0, Location{"dns.bif", 442, 450}}
+	c := Call{&f, "test/data.zeek", 42}
 	stack := []Call{c}
 
 	b.AddSample(stack)
