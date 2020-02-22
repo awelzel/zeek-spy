@@ -2,6 +2,8 @@
 
 **experimental - proof of concept**
 
+[![Build Status](https://travis-ci.org/awelzel/zeek-spy.svg?branch=master)](https://travis-ci.org/awelzel/zeek-spy)
+
 ## How it works
 
 `zeek-spy` attaches to a running `zeek` process using `ptrace(2)` and reads
@@ -14,13 +16,13 @@ filenames and line numbers.
 Upon termination `zeek-spy` writes all samples as gziped "profile.proto" file.
 This file can then be analyzed with [pprof][1].
 
-The idea was prompted by [rbyspy][2] and [py-spy][3].
+The idea was prompted by [rbspy][2] and [py-spy][3].
 
 ## Compatibility / Limitations
 
-This was developed (hacked together) against Zeek 3.0.1, compiled with
-GCC 8.3.0 on `x86_64`. Concretely, the [binary Zeek packages][4] for
-Debian 10 in version 3.0.1 should be working.
+This was developed against Zeek 3.0.1, compiled with GCC 8.3.0 on `x86_64`.
+Concretely, the [binary Zeek packages][4] for Debian 10 in version 3.0.1
+should be working.
 
 Anything else will (very very) likely not work. The current code uses
 hard-coded offsets related to the memory layout of `std::vector`, `std::string`,
@@ -79,11 +81,12 @@ This assumes `pgrep` finds just a single process.
 
 ### Performance Impact
 
-**unclear**
-
 The `zeek` process is stopped while `zeek-spy` takes a sample. A separate
 `ptrace-attach` happens for every sample. Performance may degrade for very
 high and possibly moderate sampling frequencies. The default is 100 hz.
+
+`zeek-spy` outputs an estimation of the overhead while running
+(see the `-stats` option).
 
 `zeek-spy` is very performance naive, too. There are various ways to improve
 sampling performance. Starting from caching "constant" memory locations,
@@ -94,16 +97,21 @@ switching to `process_vm_readv(2)` and most likely many Go specific tweaks.
 
 This is a bit of a crutch and basically the same as above, but nicer for testing:
 
-    $ timeout 120 /opt/zeek/bin/zeek -r ./pcaps/maccdc2012_00000.pcap & sleep 0.2 && ./zeek-spy -pid $(pgrep zeek) -hz 250 -profile ./macdc2012.pb.gz
-    2020/01/29 16:22:13 Using pid=3262, hz=250 period=4ms profile=./macdc2012.pb.gz
-    2020/01/29 16:22:13 Profiling ZeekProcess{Pid=3262, Exe=/opt/zeek/bin/zeek, LoadAddr=0x5566da8c5000, CallStackAddr=0x5566db642680, FrameStackAddr=0x5566db642470}
-    1331902557.400000 received termination signal
-    wait failed for 3262: process exited?!
-    2020/01/29 16:23:13 [WARN] Could not detach from process: no such process
-    2020/01/29 16:23:13 Failed to spy: process exited?
-    2020/01/29 16:23:13 Writing protobuf...
-    2020/01/29 16:23:13 Done.
-
+    $ timeout 10 /opt/zeek/bin/zeek -r ./pcaps/maccdc2012_00000.pcap & sleep 0.2 && ./zeek-spy -pid $(pgrep zeek) -hz 250 -profile ./macdc2012.pb.gz -stats 1s
+    2020/02/22 16:33:40 Using pid=31072, hz=250 period=4ms (4.000000 ms) profile=./zeek.pb.gz
+    2020/02/22 16:33:40 Profiling ZeekProcess{Pid=31072, Exe=/opt/zeek/bin/zeek, LoadAddr=0x55f9a6665000, CallStackAddr=0x55f9a73e2680, FrameStackAddr=0x55f9a73e2470 VersionAddr=0x55f9a73dd330}
+    2020/02/22 16:33:40 Found Zeek version '3.0.1'
+    2020/02/22 16:33:41 [STATS] elapsed=1.00s samples=134 (250 total) skipped=0 frequency=250.0hz overhead=2.76% (27.578542ms)
+    2020/02/22 16:33:42 [STATS] elapsed=2.00s samples=337 (500 total) skipped=0 frequency=250.0hz overhead=3.49% (34.902129ms)
+    2020/02/22 16:33:43 [STATS] elapsed=3.00s samples=560 (750 total) skipped=0 frequency=250.0hz overhead=4.08% (40.829118ms)
+    ...
+    1331901122.870000 received termination signal
+    2020/02/22 16:33:50 [STATS] elapsed=10.00s samples=2097 (2500 total) skipped=0 frequency=250.0hz overhead=4.48% (44.825587ms)
+    2020/02/22 16:33:50 [WARN] wait() failed for 31072: process exited
+    2020/02/22 16:33:50 [WARN] Could not detach from process: no such process
+    2020/02/22 16:33:50 [WARN] Failed to spy, exiting (process exited)
+    2020/02/22 16:33:50 Writing protobuf...
+    2020/02/22 16:33:50 Done.
 
 
 ### pprof flags
