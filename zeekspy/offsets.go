@@ -6,8 +6,8 @@ import (
 
 type StructOffsets struct {
 	LocationSize      int
-	LocationFilename  int // 8
-	LocationFirstLine int // 16
+	LocationFilename  int
+	LocationFirstLine int
 	LocationLastLine  int
 }
 
@@ -16,11 +16,13 @@ var structOffsetsMap = map[string]*StructOffsets{
 		LocationSize:      24,
 		LocationFilename:  8,
 		LocationFirstLine: 16,
+		LocationLastLine:  20,
 	},
 	"3.1": &StructOffsets{
 		LocationSize:      16,
 		LocationFilename:  0,
 		LocationFirstLine: 8,
+		LocationLastLine:  12,
 	},
 }
 
